@@ -276,9 +276,21 @@ export class SchedulerService {
     // Rough estimation for common cron patterns
     const parts = cronExpr.split(' ')
     if (parts.length < 5) return null
-    if (parts[0] === '0' && parts[1] === '*') return 3_600_000 // hourly
-    if (parts[0] === '0' && parts[1] !== '*') return 86_400_000 // daily
+
+    // Weekly must be checked before daily — patterns like "0 9 * * 1"
+    // have minute=0 and a specific hour, but parts[4] reveals the weekly DOW
     if (parts[4] !== '*') return 604_800_000 // weekly
+
+    if (parts[0] === '0' && parts[1] === '*') return 3_600_000 // every hour
+
+    // Stepped hour patterns like "0 */2 * * *" or "0 */3 * * *"
+    const stepMatch = parts[1].match(/^\*\/(\d+)$/)
+    if (parts[0] === '0' && stepMatch) {
+      const step = parseInt(stepMatch[1], 10)
+      return step > 0 ? step * 3_600_000 : 3_600_000
+    }
+
+    if (parts[0] === '0' && parts[1] !== '*') return 86_400_000 // daily
     return 86_400_000 // default daily
   }
 
