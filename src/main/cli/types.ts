@@ -33,6 +33,8 @@ export interface ActiveSession {
   turnOutputBytes: number
   /** The prompt text sent for the current turn. */
   lastPrompt: string
+  /** Timestamp (ms) when the current turn was spawned — used for per-turn elapsed logging. */
+  turnStartedAt?: number
   /** Full message history for this session (for rehydration when UI remounts). */
   messageLog: Array<{ type: string; content: string; metadata?: unknown; sender?: 'user' | 'ai' | 'system'; timestamp?: number }>
 }

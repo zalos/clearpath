@@ -38,7 +38,6 @@ export function registerIpcHandlers(
 
     // Resolve the agent — either from explicit option or from stored active agent
     let agentId = resolved.agent ?? null
-    let agentWasExplicit = !!resolved.agent
     if (!agentId && agentManager) {
       const active = agentManager.getActiveAgents()
       agentId = active[options.cli] ?? null

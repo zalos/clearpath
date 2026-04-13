@@ -196,9 +196,9 @@ export class CLIManager {
       }
 
       // Search message content
-      const log = session.messageLog ?? []
-      for (let i = 0; i < log.length; i++) {
-        const entry = log[i]
+      const messages = session.messageLog ?? []
+      for (let i = 0; i < messages.length; i++) {
+        const entry = messages[i]
         if (entry.content && matcher(entry.content)) {
           matches.push({ content: entry.content.slice(0, 200), sender: entry.sender, lineIndex: i })
         }
@@ -474,6 +474,7 @@ export class CLIManager {
     session.processingTurn = true
     session.turnOutputBytes = 0
     session.lastPrompt = input
+    session.turnStartedAt = Date.now()
 
     log.info(`[CLIManager] spawned pid=${proc.pid ?? 'unknown'} for session ${sessionId.slice(0, 8)}`)
     log.debug(`[CLIManager] turn #${session.turnCount} started — waiting for CLI response...`)
@@ -814,7 +815,7 @@ export class CLIManager {
     })
 
     proc.on('exit', (code, signal) => {
-      const duration = Date.now() - (session.info.startedAt ?? Date.now())
+      const duration = Date.now() - (session.turnStartedAt ?? Date.now())
       log.info(`[CLIManager] turn complete — session=${sessionId.slice(0, 8)} cli=${session.info.cli} exit=${code} signal=${signal} outputBytes=${session.turnOutputBytes} elapsed=${Math.round(duration / 1000)}s`)
 
       // Flush any remaining buffer
