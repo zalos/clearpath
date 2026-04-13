@@ -1,5 +1,6 @@
 import type { IpcMain } from 'electron'
-import type { NotificationManager, NotificationType, NotificationSeverity, NotificationAction, NotificationPrefs, WebhookEndpoint } from '../notifications/NotificationManager'
+import type { NotificationType, NotificationSeverity, NotificationAction, NotificationPrefs, WebhookEndpoint } from '../notifications/NotificationManager'
+import { NotificationManager } from '../notifications/NotificationManager'
 import { randomUUID } from 'crypto'
 import { checkRateLimit } from '../utils/rateLimiter'
 
@@ -58,21 +59,14 @@ export function registerNotificationHandlers(ipcMain: IpcMain, manager: Notifica
   ipcMain.handle('notifications:list-webhooks', () => manager.getWebhooks())
 
   ipcMain.handle('notifications:save-webhook', (_e, args: Omit<WebhookEndpoint, 'id'> & { id?: string }) => {
-    // Validate webhook URL before saving
-    if (args.url) {
-      try {
-        const parsed = new URL(args.url)
-        if (parsed.protocol !== 'https:') {
-          return { error: 'Only HTTPS webhook URLs are allowed' }
-        }
-        const host = parsed.hostname.toLowerCase()
-        if (host === 'localhost' || host === '127.0.0.1' || host === '::1' ||
-            /^(10\.|172\.(1[6-9]|2\d|3[01])\.|192\.168\.|169\.254\.)/.test(host)) {
-          return { error: 'Private/internal URLs are not allowed for webhooks' }
-        }
-      } catch {
-        return { error: 'Invalid webhook URL' }
-      }
+    // BUG-015: reject empty/missing URLs before validation
+    if (!args.url || args.url.trim() === '') {
+      return { error: 'Webhook URL is required' }
+    }
+    // BUG-016: use shared isWebhookUrlSafe instead of duplicated inline validation
+    const urlCheck = NotificationManager.isWebhookUrlSafe(args.url)
+    if (!urlCheck.safe) {
+      return { error: urlCheck.reason ?? 'Webhook URL is not allowed' }
     }
     const wh: WebhookEndpoint = { ...args, id: args.id ?? randomUUID() }
     manager.saveWebhook(wh)

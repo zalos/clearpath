@@ -164,6 +164,8 @@ export class NotificationManager {
 
   private shouldDesktopPush(severity: NotificationSeverity, prefs: NotificationPrefs): boolean {
     if (!prefs.quietHoursEnabled) return true
+    // BUG-002: equal start/end means a zero-length window — treat as disabled
+    if (prefs.quietHoursStart === prefs.quietHoursEnd) return true
     const now = new Date()
     const hhmm = `${String(now.getHours()).padStart(2, '0')}:${String(now.getMinutes()).padStart(2, '0')}`
     const inQuiet = prefs.quietHoursStart <= prefs.quietHoursEnd
@@ -267,8 +269,9 @@ export class NotificationManager {
   /**
    * Validate that a webhook URL is safe to request.
    * Blocks: non-HTTPS, localhost, private IPs, link-local, metadata services.
+   * Public so IPC handlers can reuse it instead of duplicating the logic (BUG-016).
    */
-  private static isWebhookUrlSafe(url: string): { safe: boolean; reason?: string } {
+  static isWebhookUrlSafe(url: string): { safe: boolean; reason?: string } {
     let parsed: URL
     try {
       parsed = new URL(url)
@@ -281,9 +284,11 @@ export class NotificationManager {
       return { safe: false, reason: 'Only HTTPS URLs are allowed for webhooks' }
     }
 
-    const host = parsed.hostname.toLowerCase()
+    // BUG-008: URL.hostname returns IPv6 addresses wrapped in brackets (e.g. "[::1]").
+    // Strip the brackets so all subsequent checks work correctly.
+    const host = parsed.hostname.replace(/^\[|\]$/g, '').toLowerCase()
 
-    // Block localhost
+    // Block localhost and loopback
     if (host === 'localhost' || host === '127.0.0.1' || host === '::1' || host === '0.0.0.0') {
       return { safe: false, reason: 'Localhost URLs are not allowed' }
     }
@@ -297,8 +302,9 @@ export class NotificationManager {
     }
 
     // Block link-local and metadata service IPs
+    // BUG-008: fe80::/10 (link-local) IPv6 range added alongside fc/fd unique-local
     if (host === '169.254.169.254' || host === '169.254.170.2' ||
-        host.startsWith('fd') || host.startsWith('fc') ||
+        host.startsWith('fd') || host.startsWith('fc') || host.startsWith('fe80') ||
         /^169\.254\./.test(host)) {
       return { safe: false, reason: 'Metadata service and link-local addresses are not allowed' }
     }

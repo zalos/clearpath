@@ -9,7 +9,8 @@
     "skipLibCheck": true,
     "noEmit": true,
     "outDir": "out/renderer",
-    "rootDir": "src/renderer"
+    "rootDir": "src/renderer",
+    "types": ["vitest/globals"]
   },
   "include": ["src/renderer/**/*"]
 }
