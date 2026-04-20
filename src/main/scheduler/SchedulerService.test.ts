@@ -845,14 +845,10 @@ describe('SchedulerService', () => {
     // Weekly with non-zero minute (falls through to parts[4] check)
     testIntervalDetection('30 9 * * 1', 604_800_000, 'weekly with minute!=0 (30 9 * * 1)')
 
-    // ── NEW BUG: weekly with minute=0 is misclassified as daily ────────
-    // For '0 9 * * 1', parts[0]='0', parts[1]='9' (not '*')
-    // The daily branch (parts[0]==='0' && parts[1]!=='*') fires BEFORE
-    // the weekly branch (parts[4]!=='*') is ever evaluated.
-    // So weekly schedules with minute=0 and specific hour get daily interval.
-    describe('NEW BUG: weekly cron with minute=0 and specific hour misclassified as daily', () => {
-      it('"0 9 * * 1" returns daily (86_400_000) instead of weekly (604_800_000)', () => {
-        // 3 days ago — within 2× weekly (14 days) but beyond 2× daily (2 days)
+    // ── FIX BUG-009: weekly with minute=0 now correctly classified as weekly ──
+    describe('FIX BUG-009: weekly cron with minute=0 and specific hour correctly classified', () => {
+      it('"0 9 * * 1" correctly returns weekly (604_800_000), no false positive miss', () => {
+        // 3 days ago — within 2× weekly (14 days), so no missed run
         const threeDaysAgo = Date.now() - 3 * 86_400_000
         storeData.jobs = [
           makeJob({
@@ -867,13 +863,12 @@ describe('SchedulerService', () => {
         svc.start()
 
         const stored = storeData.jobs as ScheduledJob[]
-        // Bug: interval is treated as daily (86_400_000), so 3 days > 2× daily → missed!
-        // A correct weekly estimate (604_800_000) would not flag this.
+        // Fixed: interval is weekly (604_800_000), 3 days < 2× weekly → no false positive
         const missed = stored[0].executions.filter((e) => e.status === 'missed')
-        expect(missed).toHaveLength(1)
+        expect(missed).toHaveLength(0)
       })
 
-      it('"0 17 * * 5" (Friday 5pm) also misclassified as daily', () => {
+      it('"0 17 * * 5" (Friday 5pm) correctly classified as weekly, no false positive', () => {
         const threeDaysAgo = Date.now() - 3 * 86_400_000
         storeData.jobs = [
           makeJob({
@@ -889,20 +884,39 @@ describe('SchedulerService', () => {
 
         const stored = storeData.jobs as ScheduledJob[]
         const missed = stored[0].executions.filter((e) => e.status === 'missed')
-        expect(missed).toHaveLength(1) // False positive due to daily classification
+        expect(missed).toHaveLength(0) // Fixed: no false positive
+      })
+
+      it('"0 9 * * 1" correctly detects miss when beyond 2× weekly', () => {
+        // 15 days ago — beyond 2× weekly (14 days), so missed run detected
+        const fifteenDaysAgo = Date.now() - 15 * 86_400_000
+        storeData.jobs = [
+          makeJob({
+            id: 'weekly-bug-3',
+            enabled: true,
+            lastRunAt: fifteenDaysAgo,
+            cronExpression: '0 9 * * 1',
+          }),
+        ]
+
+        const svc = createService()
+        svc.start()
+
+        const stored = storeData.jobs as ScheduledJob[]
+        const missed = stored[0].executions.filter((e) => e.status === 'missed')
+        expect(missed).toHaveLength(1)
       })
     })
 
-    // ── BUG-004: Stepped hours produce wrong interval estimate ──────────
+    // ── FIX BUG-004: Stepped hours now return correct interval ──────────
 
-    describe('BUG-004: stepped hour patterns misclassified as daily', () => {
-      // 0 */2 * * * should be every 2 hours = 7_200_000 ms
-      // But BUG-004 says it returns 86_400_000 (daily) because parts[1]='*/2' !== '*'
+    describe('FIX BUG-004: stepped hour patterns correctly classified', () => {
+      // 0 */2 * * * = every 2 hours = 7_200_000 ms
+      // 0 */3 * * * = every 3 hours = 10_800_000 ms
 
-      it('BUG-004: "0 */2 * * *" (every 2h) is misclassified as daily interval', () => {
-        // If the interval were correct (7_200_000), lastRunAt 3 hours ago
-        // would be within 2× (14_400_000) — but with the bug returning 86_400_000,
-        // 3 hours is well within 2× daily (172_800_000) so NO missed run is detected.
+      it('"0 */2 * * *" (every 2h): no miss when within 2× interval (3h < 4h)', () => {
+        // Correct interval = 7_200_000 (2h), threshold = 2× = 14_400_000 (4h)
+        // 3 hours = 10_800_000 < 14_400_000 → no missed run
         const threeHoursAgo = Date.now() - 3 * 3_600_000
         storeData.jobs = [
           makeJob({
@@ -917,14 +931,33 @@ describe('SchedulerService', () => {
         svc.start()
 
         const stored = storeData.jobs as ScheduledJob[]
-        // Bug: no missed run detected even though 3h > 2× 2h interval
-        // Because estimate returns 86_400_000 (daily) instead of 7_200_000
         expect(stored[0].executions).toHaveLength(0)
       })
 
-      it('BUG-004: "0 */3 * * *" (every 3h) is also misclassified as daily', () => {
-        // 7 hours ago with a 3-hour interval should trigger missed run
-        // (7h > 2× 3h = 6h), but bug returns daily interval (2× = 48h)
+      it('"0 */2 * * *" (every 2h): detects miss when beyond 2× interval (5h > 4h)', () => {
+        // Correct interval = 7_200_000 (2h), threshold = 2× = 14_400_000 (4h)
+        // 5 hours = 18_000_000 > 14_400_000 → missed run detected
+        const fiveHoursAgo = Date.now() - 5 * 3_600_000
+        storeData.jobs = [
+          makeJob({
+            id: 'bug4-1b',
+            enabled: true,
+            lastRunAt: fiveHoursAgo,
+            cronExpression: '0 */2 * * *',
+          }),
+        ]
+
+        const svc = createService()
+        svc.start()
+
+        const stored = storeData.jobs as ScheduledJob[]
+        const missed = stored[0].executions.filter((e) => e.status === 'missed')
+        expect(missed).toHaveLength(1)
+      })
+
+      it('"0 */3 * * *" (every 3h): detects miss when beyond 2× interval (7h > 6h)', () => {
+        // Correct interval = 10_800_000 (3h), threshold = 2× = 21_600_000 (6h)
+        // 7 hours = 25_200_000 > 21_600_000 → missed run detected
         const sevenHoursAgo = Date.now() - 7 * 3_600_000
         storeData.jobs = [
           makeJob({
@@ -939,20 +972,20 @@ describe('SchedulerService', () => {
         svc.start()
 
         const stored = storeData.jobs as ScheduledJob[]
-        // Bug: missed run NOT detected because interval is wrong
-        expect(stored[0].executions).toHaveLength(0)
+        const missed = stored[0].executions.filter((e) => e.status === 'missed')
+        expect(missed).toHaveLength(1)
       })
 
-      it('BUG-004: stepped pattern only detects miss after 2× daily (48h)', () => {
-        // With the buggy 86_400_000 interval for "0 */2 * * *",
-        // a miss is only detected if lastRunAt > 2 * 86_400_000 = 172_800_000 ms ago
-        const threeDaysAgo = Date.now() - 3 * 86_400_000
+      it('"0 */3 * * *" (every 3h): no miss when within 2× interval (5h < 6h)', () => {
+        // Correct interval = 10_800_000 (3h), threshold = 2× = 21_600_000 (6h)
+        // 5 hours = 18_000_000 < 21_600_000 → no missed run
+        const fiveHoursAgo = Date.now() - 5 * 3_600_000
         storeData.jobs = [
           makeJob({
-            id: 'bug4-3',
+            id: 'bug4-2b',
             enabled: true,
-            lastRunAt: threeDaysAgo,
-            cronExpression: '0 */2 * * *',
+            lastRunAt: fiveHoursAgo,
+            cronExpression: '0 */3 * * *',
           }),
         ]
 
@@ -960,7 +993,26 @@ describe('SchedulerService', () => {
         svc.start()
 
         const stored = storeData.jobs as ScheduledJob[]
-        // 3 days > 2× daily → finally detected, but the threshold is way too large
+        expect(stored[0].executions).toHaveLength(0)
+      })
+
+      it('"0 */6 * * *" (every 6h): detects miss at correct threshold', () => {
+        // Correct interval = 21_600_000 (6h), threshold = 2× = 43_200_000 (12h)
+        // 13 hours > 12 hours → missed run detected
+        const thirteenHoursAgo = Date.now() - 13 * 3_600_000
+        storeData.jobs = [
+          makeJob({
+            id: 'bug4-3',
+            enabled: true,
+            lastRunAt: thirteenHoursAgo,
+            cronExpression: '0 */6 * * *',
+          }),
+        ]
+
+        const svc = createService()
+        svc.start()
+
+        const stored = storeData.jobs as ScheduledJob[]
         const missed = stored[0].executions.filter((e) => e.status === 'missed')
         expect(missed).toHaveLength(1)
       })
